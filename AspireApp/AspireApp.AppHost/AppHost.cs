@@ -1,5 +1,8 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
+// Configure Docker Compose deployment environment
+builder.AddDockerComposeEnvironment("env");
+
 // Redis cache for output caching
 var cache = builder.AddRedis("cache");
 
