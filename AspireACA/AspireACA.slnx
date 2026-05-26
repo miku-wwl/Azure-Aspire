@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="AspireACA.ApiService/AspireACA.ApiService.csproj" />
+  <Project Path="AspireACA.AppHost/AspireACA.AppHost.csproj" />
+  <Project Path="AspireACA.ServiceDefaults/AspireACA.ServiceDefaults.csproj" />
+  <Project Path="AspireACA.Tests/AspireACA.Tests.csproj" />
+  <Project Path="AspireACA.Web/AspireACA.Web.csproj" />
+</Solution>
