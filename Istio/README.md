@@ -1,374 +1,369 @@
-# 🔭 Cloud Native Observability Demo
+# 🔭 Cloud Native Observability Demo — 验证手册
 
-**Istio + OpenTelemetry Collector + Jaeger + Prometheus + Loki + Grafana**
-
-> 在 Kubernetes 上一键部署前后端分离微服务应用，实现 **Traces · Metrics · Logs** 全链路可观测。
+> **环境**: VMware VM `192.168.199.130` | **架构**: Istio + OTel Collector + Jaeger + Prometheus + Loki + Grafana
 
 ---
 
 ## 📐 架构概览
 
-```mermaid
-graph TB
-    subgraph "外部访问"
-        USER[👤 User / Browser]
-    end
-
-    subgraph "K8s Cluster"
-        
-        subgraph "Istio Service Mesh"
-            IG[Istio Ingress Gateway]
-            
-            subgraph "demo-app namespace"
-                FE[Frontend<br/>React + Nginx<br/>:8080]
-                SVC1[api-service1<br/>Node.js :3001]
-                SVC2[api-service2<br/>Node.js :3002]
-                PG[(PostgreSQL<br/>:5432)]
-            end
-            
-            subgraph "observability namespace"
-                OTC[OpenTelemetry<br/>Collector]
-                JGR[Jaeger<br/>Traces]
-                PROM[Prometheus<br/>Metrics]
-                LOKI[Loki<br/>Logs]
-                GRAF[Grafana<br/>Dashboard]
-            end
-        end
-    end
-
-    %% Traffic flow
-    USER -->|HTTP| IG
-    IG -->|route| FE
-    FE -->|/api/service1/*| SVC1
-    FE -->|/api/service2/*| SVC2
-    SVC1 -->|HTTP| SVC2
-    SVC2 -->|HTTP| SVC1
-    SVC1 -->|SQL| PG
-    SVC2 -->|SQL| PG
-
-    %% Observability flow
-    IG -.->|OTLP Traces + Logs| OTC
-    SVC1 -.->|OTLP via sidecar| OTC
-    SVC2 -.->|OTLP via sidecar| OTC
-    OTC -->|Traces| JGR
-    OTC -->|Metrics| PROM
-    OTC -->|Logs| LOKI
-    GRAF -->|query| JGR
-    GRAF -->|query| PROM
-    GRAF -->|query| LOKI
-
-    style USER fill:#58a6ff,color:#fff
-    style FE fill:#1f6feb,color:#fff
-    style SVC1 fill:#238636,color:#fff
-    style SVC2 fill:#8957e5,color:#fff
-    style PG fill:#da3633,color:#fff
-    style OTC fill:#f0883e,color:#fff
-    style JGR fill:#69c5ce,color:#111
-    style PROM fill:#e6522c,color:#fff
-    style GRAF fill:#f15a24,color:#fff
-    style LOKI fill:#ffdf6b,color:#111
 ```
+Browser → Istio Gateway (:30132) → Frontend (nginx) → api-service1 (:3001) → api-service2 (:3002) → PostgreSQL (:5432)
+                                      │                        │                      │
+                                Istio Sidecar            Istio Sidecar          Istio Sidecar
+                                      │                        │                      │
+                                      └────────────┬───────────┴──────────────────────┘
+                                                   │
+                                          Envoy Zipkin Tracer
+                                                   │
+                                          OTel Collector (:9411)
+                                          ┌────────┼────────┐
+                                          │        │        │
+                                       Jaeger  Prometheus  Loki
+                                      (:30091)  (:30092)  (:3100)
+                                          └────────┼────────┘
+                                                Grafana
+                                               (:30090)
+```
+
+## 🔗 两条调用链路
+
+| 链路 | 流程 | 预期耗时 |
+|------|------|---------|
+| **A** | Frontend → api-service1 → api-service2/chain → PostgreSQL | < 50ms |
+| **B** | Frontend → api-service2 → api-service1/chain → PostgreSQL | < 50ms |
 
 ---
 
-## 🔗 调用链路 (Call Chains)
+## 🧪 验证方式
 
-| 链路 | 流程 | 说明 |
-|------|------|------|
-| **链路 A** | `Frontend → api-service1 → api-service2 → PostgreSQL` | 前端调用 service1，service1 再调 service2，service2 查 DB |
-| **链路 B** | `Frontend → api-service2 → api-service1 → PostgreSQL` | 前端调用 service2，service2 再调 service1，service1 查 DB |
+### 方式一：浏览器验证（推荐）
 
-每条请求都有 **完整 TraceID**，在 Istio、Jaeger、Loki、Grafana 中能联动查询。
-
----
-
-## 📦 目录结构
-
-```
-Istio/
-├── deploy.sh                    # 🚀 一键部署脚本 (Linux/Mac)
-├── deploy.ps1                   # 🚀 一键部署脚本 (Windows PowerShell)
-├── README.md                    # 📖 本文档
-├── k8s/
-│   ├── 00-namespaces.yaml       # 命名空间: demo-app + observability
-│   ├── 01-postgres.yaml         # PostgreSQL + 初始化数据
-│   ├── 10-api-service1.yaml     # 后端微服务 1
-│   ├── 11-api-service2.yaml     # 后端微服务 2
-│   ├── 12-frontend.yaml         # React 前端
-│   ├── 20-istio-telemetry.yaml  # Istio Telemetry (Traces + AccessLogs → OTel)
-│   ├── 21-istio-gateway.yaml    # Istio Gateway + VirtualService + DestinationRule
-│   ├── 30-otel-collector.yaml   # OpenTelemetry Collector
-│   ├── 31-jaeger.yaml           # Jaeger (All-in-One)
-│   ├── 32-prometheus.yaml       # Prometheus
-│   ├── 33-loki.yaml             # Loki
-│   └── 34-grafana.yaml          # Grafana (预配置数据源)
-└── src/
-    ├── api-service1/            # Node.js + Express (端口 3001)
-    │   ├── package.json
-    │   ├── server.js
-    │   └── Dockerfile
-    ├── api-service2/            # Node.js + Express (端口 3002)
-    │   ├── package.json
-    │   ├── server.js
-    │   └── Dockerfile
-    └── frontend/                # React SPA + Nginx (端口 8080)
-        ├── package.json
-        ├── public/index.html
-        ├── src/
-        │   ├── index.js
-        │   ├── App.js
-        │   └── App.css
-        ├── nginx.conf
-        └── Dockerfile
-```
+| 面板 | URL | 验证操作 |
+|------|-----|---------|
+| 📱 Frontend | `http://192.168.199.130:30132` | 点击 **"同时调用两条链路"** 按钮，查看 JSON 响应 |
+| 🔍 Jaeger | `http://192.168.199.130:30091` | Service 下拉选 `api-service1.demo-app` → Find Traces |
+| 📊 Grafana | `http://192.168.199.130:30090` | Explore → 切换 Jaeger / Prometheus / Loki |
+| 📈 Prometheus | `http://192.168.199.130:30092` | 查询 `istio_requests_total` |
 
 ---
 
-## 🚀 一键部署
+### 方式二：cURL 命令行验证
 
-### 前置条件
-
-| 组件 | 版本要求 | 安装方式 |
-|------|---------|---------|
-| Kubernetes | ≥ 1.27 | k3s / minikube / kind |
-| Istio | ≥ 1.20 | `istioctl install --set profile=demo -y` |
-| Docker | ≥ 24 | [docker.io](https://docker.io) |
-| kubectl | ≥ 1.27 | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
-
-### 部署步骤
+在任意能访问 `192.168.199.130` 的机器上执行：
 
 ```bash
-# 1. 确保 K8s 集群运行中
-kubectl cluster-info
+NODE=192.168.199.130
 
-# 2. 安装 Istio（如果还未安装）
-istioctl install --set profile=demo -y
-kubectl label namespace default istio-injection=enabled --overwrite
+# ============ 1. 两条调用链 ============
 
-# 3. 进入 Istio 目录
-cd Istio/
+# 链路 A：Frontend → svc1 → svc2 → PostgreSQL
+echo "=== 链路 A ==="
+curl -s http://$NODE:30132/api/service1/info | python3 -m json.tool | head -15
 
-# 4. 一键部署！
-chmod +x deploy.sh
-./deploy.sh
+# 链路 B：Frontend → svc2 → svc1 → PostgreSQL
+echo "=== 链路 B ==="
+curl -s http://$NODE:30132/api/service2/info | python3 -m json.tool | head -15
 
-# 或者用 kubectl 逐个部署：
-kubectl apply -f k8s/00-namespaces.yaml
-kubectl apply -f k8s/01-postgres.yaml
-kubectl apply -f k8s/10-api-service1.yaml
-kubectl apply -f k8s/11-api-service2.yaml
-kubectl apply -f k8s/12-frontend.yaml
-kubectl apply -f k8s/30-otel-collector.yaml
-kubectl apply -f k8s/31-jaeger.yaml
-kubectl apply -f k8s/32-prometheus.yaml
-kubectl apply -f k8s/33-loki.yaml
-kubectl apply -f k8s/34-grafana.yaml
-kubectl apply -f k8s/20-istio-telemetry.yaml
-kubectl apply -f k8s/21-istio-gateway.yaml
+# ============ 2. Jaeger 追踪 ============
+
+echo "=== Jaeger Services ==="
+curl -s http://$NODE:30091/api/services | python3 -m json.tool
+
+echo "=== Traces ==="
+curl -s "http://$NODE:30091/api/traces?service=api-service1.demo-app&limit=3&lookback=1h" | python3 -m json.tool | head -30
+
+# ============ 3. Prometheus 指标 ============
+
+echo "=== Prometheus ==="
+curl -s "http://$NODE:30092/api/v1/query?query=istio_requests_total" | python3 -m json.tool | head -20
+
+# ============ 4. Grafana 健康检查 ============
+
+echo "=== Grafana ==="
+curl -s http://$NODE:30090/api/health | python3 -m json.tool
+
+# ============ 5. Loki 就绪检查 ============
+
+echo "=== Loki ==="
+curl -s http://$NODE:3100/ready
 ```
 
 ---
 
-## 🔌 访问入口
-
-| 服务 | URL | 端口 | 说明 |
-|------|-----|------|------|
-| 🖥 **Frontend** | `http://<NODE_IP>:<ISTIO_INGRESS_PORT>` | 80 (via Istio Gateway) | React 应用 |
-| 📊 **Grafana** | `http://<NODE_IP>:30090` | 30090 (NodePort) | 统一可观测面板 |
-| 🔍 **Jaeger** | `http://<NODE_IP>:30091` | 30091 (NodePort) | 分布式追踪 |
-| 📈 **Prometheus** | `http://<NODE_IP>:30092` | 30092 (NodePort) | 指标查询 |
-
-**端口转发（如果 NodePort 不通）：**
-```bash
-kubectl port-forward -n istio-system svc/istio-ingressgateway 8080:80 &
-kubectl port-forward -n observability svc/grafana 3000:3000 &
-kubectl port-forward -n observability svc/jaeger 16686:16686 &
-kubectl port-forward -n observability svc/prometheus 9090:9090 &
-```
-
----
-
-## 🧪 测试验证
-
-### 1. 测试 API 调用链
+### 方式三：在 VM 内部验证
 
 ```bash
-# 获取 Istio Ingress Gateway 地址
-export INGRESS_HOST=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-export INGRESS_PORT=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.spec.ports[?(@.name=="http2")].nodePort}')
+# SSH 到 VM
+ssh miku@192.168.199.130
 
-# 测试链路 A：Frontend → service1 → service2 → PostgreSQL
-curl http://${INGRESS_HOST}:${INGRESS_PORT}/api/service1/info | jq
+# 查看所有 Pod 状态
+kubectl get pods -n demo-app
+kubectl get pods -n observability
 
-# 测试链路 B：Frontend → service2 → service1 → PostgreSQL
-curl http://${INGRESS_HOST}:${INGRESS_PORT}/api/service2/info | jq
+# 查看 OTel Collector 数据流入
+kubectl logs -n observability deploy/otel-collector --tail=10 | grep TracesExporter
 
-# 健康检查
-curl http://${INGRESS_HOST}:${INGRESS_PORT}/api/service1/health
-curl http://${INGRESS_HOST}:${INGRESS_PORT}/api/service2/health
-```
-
-### 2. 验证 Jaeger Trace
-
-1. 打开 Jaeger: `http://<NODE_IP>:30091`
-2. Service 下拉选择任意服务（如 `frontend.demo-app`）
-3. 点击 **Find Traces**
-4. 点击任一条 Trace 查看完整调用链：
-   ```
-   frontend →
-     api-service1 →
-       api-service2 →
-         postgres (SQL query)
-   ```
-
-### 3. 验证 Prometheus Metrics
-
-1. 打开 Prometheus: `http://<NODE_IP>:30092`
-2. 查询以下指标：
-   ```promql
-   # 请求总量
-   istio_requests_total
-   
-   # 请求延迟 P99
-   histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (le, destination_service_name))
-   
-   # 请求成功率
-   sum(rate(istio_requests_total{response_code=~"2.."}[5m])) / sum(rate(istio_requests_total[5m]))
-   ```
-
-### 4. 验证 Loki Logs
-
-1. 打开 Grafana: `http://<NODE_IP>:30090`
-2. 左侧菜单 → **Explore** → 数据源选 **Loki**
-3. 查询日志：
-   ```logql
-   {namespace="demo-app"} |= ""
-   ```
-4. 点击日志行中的 **TraceID** 链接，直接跳转到 Jaeger 查看对应 Trace
-
-### 5. 验证 Grafana 联动
-
-Grafana 已预配置三个数据源联动：
-
-- **Jaeger → Loki**: Trace 页面可关联查询日志
-- **Loki → Jaeger**: 日志中的 `traceid` 可直接跳转到 Jaeger Trace
-- **Prometheus → 全链路**: 指标异常时可下钻查看 Trace
-
----
-
-## 📊 可观测数据流
-
-```mermaid
-sequenceDiagram
-    participant FE as Frontend
-    participant S1 as api-service1
-    participant S2 as api-service2
-    participant PG as PostgreSQL
-    participant IS as Istio Sidecar
-    participant OTC as OTel Collector
-    participant J as Jaeger
-    participant P as Prometheus
-    participant L as Loki
-    participant G as Grafana
-
-    FE->>S1: GET /api/service1/info
-    Note over IS: Sidecar intercepts<br/>Generates span + metrics
-    S1->>S2: GET /api/service2/info
-    S2->>PG: SELECT * FROM demo_data
-    PG-->>S2: result rows
-    S2-->>S1: JSON response
-    S1-->>FE: JSON response
-
-    IS->>OTC: OTLP (traces + access logs)
-    OTC->>J: Traces (OTLP)
-    OTC->>P: Metrics (Prometheus scrape)
-    OTC->>L: Logs (Loki push API)
-    
-    G->>J: Query traces
-    G->>P: Query metrics
-    G->>L: Query logs
+# 查看微服务日志
+kubectl logs -n demo-app deploy/api-service1 -c api-service1 --tail=20
+kubectl logs -n demo-app deploy/api-service2 -c api-service2 --tail=20
 ```
 
 ---
 
-## 🔧 自定义配置
+## ✅ 预期结果（8 项检查）
 
-### 修改采样率
+### 1. 调用链路 A
 
-编辑 `k8s/20-istio-telemetry.yaml`:
-```yaml
-spec:
-  tracing:
-    - randomSamplingPercentage: 50.0  # 改为 50%
+**命令**:
+```bash
+curl -s http://192.168.199.130:30132/api/service1/info | python3 -c "import sys,json; d=json.load(sys.stdin); print('elapsed:', d['elapsedMs'], 'ms')"
 ```
 
-### 添加新的 Grafana Dashboard
+**预期输出**:
+```
+elapsed: <50 ms
+```
 
-编辑 `k8s/34-grafana.yaml` 中的 `grafana-dashboard-istio` ConfigMap，添加 JSON Dashboard。
+**预期 JSON**:
+```json
+{
+  "service": "api-service1",
+  "version": "1.0.0",
+  "elapsedMs": 18,
+  "downstream": {
+    "apiService2": { "service": "api-service2", "chain": true, "dbRows": 5, "data": [...] },
+    "postgres": { "connected": true, "rows": [...] }
+  }
+}
+```
 
-### 扩展微服务
+✅ **通过条件**: HTTP 200 + elapsedMs < 100 + apiService2.chain == true + postgres.connected == true
 
-复制 `src/api-service1/` 目录，修改端口和逻辑，创建新的 Deployment YAML。
+---
+
+### 2. 调用链路 B
+
+**命令**:
+```bash
+curl -s http://192.168.199.130:30132/api/service2/info | python3 -c "import sys,json; d=json.load(sys.stdin); print('elapsed:', d['elapsedMs'], 'ms')"
+```
+
+**预期输出**:
+```
+elapsed: <50 ms
+```
+
+✅ **通过条件**: HTTP 200 + elapsedMs < 100 + apiService1.chain == true + postgres.connected == true
+
+---
+
+### 3. Jaeger（分布式追踪）
+
+**命令**:
+```bash
+# 查看服务列表
+curl -s http://192.168.199.130:30091/api/services | python3 -m json.tool
+
+# 查看 Trace
+curl -s "http://192.168.199.130:30091/api/traces?service=api-service1.demo-app&limit=3&lookback=1h" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+for t in (d.get('data') or []):
+    print(f'TraceID: {t[\"traceID\"][:16]}... spans: {len(t[\"spans\"])}')
+"
+```
+
+**预期输出**:
+```json
+{ "data": ["api-service1.demo-app", "jaeger-all-in-one"], "total": 2 }
+```
+```
+TraceID: 944f4d50c1c12486... spans: 1
+TraceID: 1fd09d60eab9e5d2... spans: 1
+```
+
+✅ **通过条件**: 服务列表含 `api-service1.demo-app` + 查询返回 ≥ 1 条 Trace
+
+---
+
+### 4. Prometheus（指标采集）
+
+**命令**:
+```bash
+curl -s "http://192.168.199.130:30092/api/v1/query?query=istio_requests_total" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+results=d['data']['result']
+print(f'istio_requests_total series: {len(results)}')
+for r in results[:5]:
+    svc=r['metric'].get('destination_service_name','?')
+    print(f'  {svc} = {r[\"value\"][1]}')
+"
+```
+
+**预期输出**:
+```
+istio_requests_total series: > 100
+  frontend = xxx
+  api-service1 = xxx
+  api-service2 = xxx
+  PassthroughCluster = xxx
+```
+
+✅ **通过条件**: 系列数 > 50 + 包含 `api-service1` 和 `api-service2`
+
+---
+
+### 5. Grafana（统一可视化）
+
+**命令**:
+```bash
+curl -s http://192.168.199.130:30090/api/health | python3 -m json.tool
+curl -s http://192.168.199.130:30090/api/datasources | python3 -c "
+import sys,json
+for ds in json.load(sys.stdin):
+    print(f'{ds[\"name\"]} ({ds[\"type\"]})')
+"
+```
+
+**预期输出**:
+```json
+{ "database": "ok", "version": "11.0.0" }
+```
+```
+Jaeger (jaeger)
+Loki (loki)
+Prometheus (prometheus)
+```
+
+✅ **通过条件**: database: ok + 含 Jaeger / Prometheus / Loki 三个数据源
+
+---
+
+### 6. Loki（日志聚合）
+
+**命令**:
+```bash
+curl -s http://192.168.199.130:3100/ready
+```
+
+**预期输出**:
+```
+Ready
+```
+
+✅ **通过条件**: 返回 `Ready`
+
+---
+
+### 7. OpenTelemetry Collector（数据管道）
+
+**命令**:
+```bash
+kubectl logs -n observability deploy/otel-collector --tail=20 2>/dev/null | grep -E "TracesExporter|MetricsExporter|LogsExporter"
+```
+
+**预期输出**:
+```
+TracesExporter ... "resource spans": N, "spans": M
+MetricsExporter ... "resource metrics": N
+```
+
+✅ **通过条件**: TracesExporter 日志包含 `"spans": N`（N > 0）
+
+---
+
+### 8. Pod 健康状态
+
+**命令**:
+```bash
+kubectl get pods -n demo-app
+kubectl get pods -n observability
+```
+
+**预期输出**:
+```
+# demo-app
+NAME                READY   STATUS    RESTARTS   AGE
+api-service1-xxx    2/2     Running   0          xx
+api-service2-xxx    2/2     Running   0          xx
+frontend-xxx        2/2     Running   0          xx
+postgres-xxx        1/1     Running   0          xx
+
+# observability
+NAME                READY   STATUS    RESTARTS   AGE
+grafana-xxx         1/1     Running   0          xx
+jaeger-xxx          1/1     Running   0          xx
+loki-xxx            1/1     Running   0          xx
+otel-collector-xxx  1/1     Running   0          xx
+prometheus-xxx      1/1     Running   0          xx
+```
+
+✅ **通过条件**: 9 个 Pod 全部 Running，demo-app Pod 为 2/2（含 istio-proxy sidecar）
+
+---
+
+## 📊 数据流路径
+
+```
+                         ┌──────────────────────┐
+                         │     Istio Envoy       │
+                         │   (Zipkin Tracer)     │
+                         └──────────┬───────────┘
+                                    │ Zipkin :9411
+                         ┌──────────▼───────────┐
+                         │   OTel Collector      │
+                         │                       │
+                         │  Traces → Jaeger      │
+                         │  Metrics → Prometheus │
+                         │  Logs → Loki          │
+                         └──┬────────┬────────┬──┘
+                            │        │        │
+                    ┌───────▼──┐ ┌──▼────┐ ┌─▼─────┐
+                    │  Jaeger  │ │Prometh│ │ Loki  │
+                    │  :30091  │ │ :30092│ │ :3100 │
+                    └────┬─────┘ └──┬────┘ └──┬────┘
+                         └──────────┼────────┘
+                              ┌─────▼─────┐
+                              │  Grafana   │
+                              │  :30090    │
+                              └───────────┘
+```
 
 ---
 
 ## 🧹 清理
 
 ```bash
-# 删除所有部署
+# 在 VM 上执行
 kubectl delete namespace demo-app
 kubectl delete namespace observability
-
-# 清理 Istio Telemetry
-kubectl delete -f k8s/20-istio-telemetry.yaml
-
-# 卸载 Istio（如果不再需要）
-istioctl uninstall --purge -y
-kubectl delete namespace istio-system
+kubectl delete -f ~/istio-demo/k8s/20-istio-telemetry.yaml
 ```
 
 ---
 
-## 📝 技术栈
+## 📦 项目文件结构
 
-| 组件 | 镜像 | 用途 |
-|------|------|------|
-| **Istio** | `istio/proxyv2` | Service Mesh，自动 Sidecar 注入 |
-| **OpenTelemetry Collector** | `otel/opentelemetry-collector-contrib:0.102.0` | 统一可观测数据管道 |
-| **Jaeger** | `jaegertracing/all-in-one:1.57` | 分布式追踪存储与 UI |
-| **Prometheus** | `prom/prometheus:v2.52.0` | 指标采集与存储 |
-| **Loki** | `grafana/loki:3.0.0` | 日志聚合与存储 |
-| **Grafana** | `grafana/grafana:11.0.0` | 统一可视化面板 |
-| **PostgreSQL** | `postgres:16-alpine` | 演示数据库 |
-| **api-service1/2** | `node:18-alpine` (base) | 后端微服务 |
-| **Frontend** | `node:18-alpine` + `nginx:alpine` | React 前端 |
-
-> ✅ 所有镜像均为 **Docker Hub 官方公共镜像**，无需私有仓库。
-
----
-
-## ❓ FAQ
-
-**Q: 为什么 Istio sidecar 没有注入？**
-A: 确保 namespace 有 `istio-injection=enabled` label，并且重启 Pod：
-```bash
-kubectl label namespace demo-app istio-injection=enabled --overwrite
-kubectl rollout restart deployment -n demo-app
 ```
-
-**Q: Jaeger 中没有 Trace？**
-A: 检查 OTel Collector 日志：
-```bash
-kubectl logs -n observability -l app=otel-collector
-```
-
-**Q: Grafana 数据源报错？**
-A: 等待所有 Pod Ready，Grafana 需要 10-20 秒加载数据源配置。
-
-**Q: 如何在 VMware 虚拟机中使用？**
-A: 在 VM 上安装 k3s：
-```bash
-curl -sfL https://get.k3s.io | sh -
-sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-# 然后运行 ./deploy.sh
+Istio/
+├── README.md                    # 本验证手册
+├── k8s/                         # Kubernetes 部署清单
+│   ├── 00-namespaces.yaml
+│   ├── 01-postgres.yaml
+│   ├── 10-api-service1.yaml
+│   ├── 11-api-service2.yaml
+│   ├── 12-frontend.yaml
+│   ├── 20-istio-telemetry.yaml
+│   ├── 21-istio-gateway.yaml
+│   ├── 30-otel-collector.yaml
+│   ├── 31-jaeger.yaml
+│   ├── 32-prometheus.yaml
+│   ├── 33-loki.yaml
+│   ├── 34-grafana.yaml
+│   └── kustomization.yaml
+└── src/                         # 应用源码
+    ├── api-service1/
+    ├── api-service2/
+    └── frontend/
 ```

@@ -1,7 +1,11 @@
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
+const http = require('http');
 const winston = require('winston');
+
+// HTTP agent with keep-alive disabled (works better with Istio sidecar)
+const httpAgent = new http.Agent({ keepAlive: false });
 
 // ── Logger with JSON format (structured logging) ──────────────────────────
 const logger = winston.createLogger({
@@ -45,10 +49,12 @@ app.get('/api/service1/info', async (req, res) => {
     let service2Data = null;
     let service2Error = null;
     try {
-      const svc2Resp = await axios.get('http://api-service2.demo-app.svc.cluster.local:3002/api/service2/info', {
+      const svc2Resp = await axios.get('http://api-service2:3002/api/service2/chain', {
         timeout: 5000,
+        httpAgent,
         headers: {
-          'x-request-id': req.headers['x-request-id'] || `svc1-${Date.now()}`,
+          'x-request-id': req.headers['x-request-id'] || 'svc1-'+Date.now(),
+          'Connection': 'close',
         },
       });
       service2Data = svc2Resp.data;
@@ -99,6 +105,19 @@ app.get('/api/service1/data', async (req, res) => {
     res.json({ service: 'api-service1', count: result.rowCount, data: result.rows });
   } catch (error) {
     logger.error('Database query failed', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Chain endpoint (called by api-service2, queries DB only - no callback) ──
+app.get('/api/service1/chain', async (req, res) => {
+  logger.info('GET /api/service1/chain called (DB only)', {
+    traceId: req.headers['x-b3-traceid'] || 'N/A',
+  });
+  try {
+    const result = await pool.query('SELECT id, name, value, created_at FROM demo_data ORDER BY created_at DESC LIMIT 5');
+    res.json({ service: 'api-service1', chain: true, dbRows: result.rowCount, data: result.rows });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });

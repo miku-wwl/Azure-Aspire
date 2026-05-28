@@ -1,7 +1,11 @@
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
+const http = require('http');
 const winston = require('winston');
+
+// HTTP agent with keep-alive disabled (works better with Istio sidecar)
+const httpAgent = new http.Agent({ keepAlive: false });
 
 // ── Logger with JSON format (structured logging) ──────────────────────────
 const logger = winston.createLogger({
@@ -45,10 +49,12 @@ app.get('/api/service2/info', async (req, res) => {
     let service1Data = null;
     let service1Error = null;
     try {
-      const svc1Resp = await axios.get('http://api-service1.demo-app.svc.cluster.local:3001/api/service1/info', {
+      const svc1Resp = await axios.get('http://api-service1:3001/api/service1/chain', {
         timeout: 5000,
+        httpAgent,
         headers: {
-          'x-request-id': req.headers['x-request-id'] || `svc2-${Date.now()}`,
+          'x-request-id': req.headers['x-request-id'] || 'svc2-'+Date.now(),
+          'Connection': 'close',
         },
       });
       service1Data = svc1Resp.data;
@@ -89,6 +95,19 @@ app.get('/api/service2/info', async (req, res) => {
   } catch (error) {
     logger.error('Unexpected error', { error: error.message, stack: error.stack });
     res.status(500).json({ service: 'api-service2', error: error.message });
+  }
+});
+
+// ── Chain endpoint (called by api-service1, queries DB only - no callback) ──
+app.get('/api/service2/chain', async (req, res) => {
+  logger.info('GET /api/service2/chain called (DB only)', {
+    traceId: req.headers['x-b3-traceid'] || 'N/A',
+  });
+  try {
+    const result = await pool.query('SELECT id, name, value, created_at FROM demo_data ORDER BY created_at DESC LIMIT 5');
+    res.json({ service: 'api-service2', chain: true, dbRows: result.rowCount, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
