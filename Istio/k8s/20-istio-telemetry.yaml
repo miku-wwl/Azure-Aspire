@@ -1,0 +1,83 @@
+# =============================================================================
+# Istio MeshConfig Extension Provider - OpenTelemetry
+# This configures Istio to send traces + access logs to OTel Collector via OTLP
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-shared-config
+  namespace: istio-system
+  labels:
+    istio.io/rev: default
+data:
+  mesh: |-
+    # Add extension providers for OpenTelemetry
+    extensionProviders:
+    # OpenTelemetry Tracing provider
+    - name: otel-tracing
+      opentelemetry:
+        port: 4317
+        service: otel-collector.observability.svc.cluster.local
+    # OpenTelemetry Access Logging provider  
+    - name: otel-accesslog
+      opentelemetry:
+        port: 4317
+        service: otel-collector.observability.svc.cluster.local
+---
+# =============================================================================
+# Istio Telemetry - Enable Distributed Tracing
+# =============================================================================
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-tracing
+  namespace: istio-system
+spec:
+  tracing:
+    - providers:
+        - name: otel-tracing
+      randomSamplingPercentage: 100.0
+---
+# =============================================================================
+# Istio Telemetry - Enable Access Logging via OpenTelemetry
+# =============================================================================
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-accesslog
+  namespace: istio-system
+spec:
+  accessLogging:
+    - providers:
+        - name: otel-accesslog
+---
+# =============================================================================
+# Istio Telemetry - Metrics configuration for demo-app namespace
+# =============================================================================
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: demo-app-metrics
+  namespace: demo-app
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: REQUEST_COUNT
+          tagOverrides:
+            trace_id:
+              value: "request.headers['x-b3-traceid'] != '' ? request.headers['x-b3-traceid'] : 'unknown'"
+---
+# =============================================================================
+# PeerAuthentication - mTLS permissive (for demo simplicity)
+# =============================================================================
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: PERMISSIVE

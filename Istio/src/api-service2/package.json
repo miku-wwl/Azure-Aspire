@@ -1,0 +1,15 @@
+{
+  "name": "api-service2",
+  "version": "1.0.0",
+  "description": "Demo API Service 2 - Cloud Native Observability",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "axios": "^1.6.2",
+    "winston": "^3.11.0"
+  }
+}

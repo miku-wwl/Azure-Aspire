@@ -1,0 +1,179 @@
+# =============================================================================
+# Grafana - Unified Observability Dashboard
+# Data sources: Prometheus (metrics) + Jaeger (traces) + Loki (logs)
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      # Prometheus - Metrics
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://prometheus.observability.svc.cluster.local:9090
+        access: proxy
+        isDefault: true
+        editable: true
+        jsonData:
+          timeInterval: "15s"
+
+      # Jaeger - Traces
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        url: http://jaeger.observability.svc.cluster.local:16686
+        access: proxy
+        editable: true
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            filterByTraceID: true
+            filterBySpanID: false
+            tags: []
+          nodeGraph:
+            enabled: true
+
+      # Loki - Logs
+      - name: Loki
+        type: loki
+        uid: loki
+        url: http://loki.observability.svc.cluster.local:3100
+        access: proxy
+        editable: true
+        jsonData:
+          derivedFields:
+            # Link TraceID in logs to Jaeger
+            - datasourceUid: jaeger
+              matcherRegex: "traceid[=:]\\s*\"?([a-f0-9]+)\"?"
+              name: TraceID
+              url: "$${__value.raw}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: observability
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        folder: Demo
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-istio
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  istio-mesh.json: |
+    {
+      "title": "Istio Mesh Dashboard",
+      "uid": "istio-mesh",
+      "panels": [
+        {
+          "title": "Request Rate",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "sum(rate(istio_requests_total[1m])) by (destination_service_name)",
+              "legendFormat": "{{destination_service_name}}"
+            }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+  labels:
+    app: grafana
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30090
+  selector:
+    app: grafana
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.0.0
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Admin"
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+            - name: GF_FEATURE_TOGGLES_ENABLE
+              value: "traceqlSearch traceToMetrics traceToLogsV2"
+            - name: GF_INSTALL_PLUGINS
+              value: ""
+          ports:
+            - containerPort: 3000
+              name: http
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboards-config
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "300m"
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboards-config
+          configMap:
+            name: grafana-dashboards
+        - name: dashboards
+          configMap:
+            name: grafana-dashboard-istio

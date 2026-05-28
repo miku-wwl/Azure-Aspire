@@ -1,0 +1,17 @@
+# =============================================================================
+# Namespaces: demo-app (application) + observability (monitoring)
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-app
+  labels:
+    name: demo-app
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    name: observability

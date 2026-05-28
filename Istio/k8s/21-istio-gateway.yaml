@@ -1,0 +1,107 @@
+# =============================================================================
+# Istio Gateway - Entry point for external traffic
+# =============================================================================
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: demo-gateway
+  namespace: demo-app
+spec:
+  selector:
+    istio: ingressgateway  # Use Istio's default ingress gateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+---
+# =============================================================================
+# VirtualService: Frontend → Istio Gateway
+# =============================================================================
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: frontend-vs
+  namespace: demo-app
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - demo-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: frontend.demo-app.svc.cluster.local
+            port:
+              number: 8080
+---
+# =============================================================================
+# VirtualService: api-service1 internal routing
+# =============================================================================
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: api-service1-vs
+  namespace: demo-app
+spec:
+  hosts:
+    - api-service1.demo-app.svc.cluster.local
+  http:
+    - route:
+        - destination:
+            host: api-service1.demo-app.svc.cluster.local
+            port:
+              number: 3001
+---
+# =============================================================================
+# VirtualService: api-service2 internal routing  
+# =============================================================================
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: api-service2-vs
+  namespace: demo-app
+spec:
+  hosts:
+    - api-service2.demo-app.svc.cluster.local
+  http:
+    - route:
+        - destination:
+            host: api-service2.demo-app.svc.cluster.local
+            port:
+              number: 3002
+---
+# =============================================================================
+# DestinationRule: api-service1
+# =============================================================================
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: api-service1-dr
+  namespace: demo-app
+spec:
+  host: api-service1.demo-app.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+---
+# =============================================================================
+# DestinationRule: api-service2
+# =============================================================================
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: api-service2-dr
+  namespace: demo-app
+spec:
+  host: api-service2.demo-app.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
