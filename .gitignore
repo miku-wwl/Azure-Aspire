@@ -62,3 +62,16 @@ ACA/terraform/.terraform/
 ACA/terraform/terraform.tfstate
 ACA/terraform/terraform.tfstate.backup
 ACA/terraform/*.tfplan
+
+# Aspire publish artifacts
+publish-output/
+AspireACA/publish-output/
+
+# Common local IDE and OS files
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.DS_Store
