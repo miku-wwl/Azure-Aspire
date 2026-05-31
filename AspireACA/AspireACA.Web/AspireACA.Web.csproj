@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.StackExchange.Redis.OutputCaching" Version="13.3.5" />
+    <PackageReference Include="Aspire.Microsoft.Azure.StackExchangeRedis" Version="13.3.5" />
   </ItemGroup>
 
 </Project>
